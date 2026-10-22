@@ -1,11 +1,7 @@
 import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi'
-import type { AppEnv, AuthPayload } from '../env'
-import { db } from '../db'
-import { users, userInsertSchema, userUpdateSchema } from '../db/schema'
-import { eq, or, ilike, count } from 'drizzle-orm'
-import { sign } from 'hono/jwt'
-import bcrypt from 'bcryptjs'
-import { success, fail } from '../utils/response'
+import type { AppEnv } from '../env'
+import { userInsertSchema, userUpdateSchema } from '../db/schema'
+import { userController } from '../controllers/user.controller'
 
 const userRouter = new OpenAPIHono<AppEnv>()
 
@@ -21,6 +17,13 @@ const errorSchema = z.object({
   code: z.number(),
   msg: z.string(),
   data: z.unknown().optional()
+})
+
+const userViewSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string(),
+  createdAt: z.date().nullable()
 })
 
 // --------------------------
@@ -44,12 +47,7 @@ const listRoute = createRoute({
       content: {
         'application/json': {
           schema: respSchema(z.object({
-            list: z.array(z.object({
-              id: z.number(),
-              name: z.string(),
-              email: z.string(),
-              createdAt: z.date().nullable()
-            })),
+            list: z.array(userViewSchema),
             page: z.number(),
             size: z.number(),
             total: z.number(),
@@ -61,21 +59,7 @@ const listRoute = createRoute({
     401: { description: '未登录或 token 无效' }
   }
 })
-userRouter.openapi(listRoute, async (c) => {
-  const { page, size, keyword } = c.req.valid('query')
-  const whereCond = keyword
-    ? or(ilike(users.name, `%${keyword}%`), ilike(users.email, `%${keyword}%`))
-    : undefined
-  const [totalRow] = await db.select({ total: count() }).from(users).where(whereCond)
-  const total = Number(totalRow.total)
-  const list = await db
-    .select({ id: users.id, name: users.name, email: users.email, createdAt: users.createdAt })
-    .from(users)
-    .where(whereCond)
-    .limit(size)
-    .offset((page - 1) * size)
-  return success(c, { list, page, size, total, totalPage: Math.ceil(total / size) })
-})
+userRouter.openapi(listRoute, (c) => userController.list(c, c.req.valid('query')))
 
 // --------------------------
 // 获取单个用户
@@ -95,12 +79,7 @@ const getOneRoute = createRoute({
       description: '成功',
       content: {
         'application/json': {
-          schema: respSchema(z.object({
-            id: z.number(),
-            name: z.string(),
-            email: z.string(),
-            createdAt: z.date().nullable()
-          }))
+          schema: respSchema(userViewSchema)
         }
       }
     },
@@ -108,12 +87,7 @@ const getOneRoute = createRoute({
     404: { description: '用户不存在' }
   }
 })
-userRouter.openapi(getOneRoute, async (c) => {
-  const id = c.req.valid('param').id
-  const [user] = await db.select({ id: users.id, name: users.name, email: users.email, createdAt: users.createdAt }).from(users).where(eq(users.id, id))
-  if (!user) return fail(c, '用户不存在', 404)
-  return success(c, user)
-})
+userRouter.openapi(getOneRoute, (c) => userController.getOne(c, c.req.valid('param').id))
 
 // --------------------------
 // 注册
@@ -135,24 +109,13 @@ const registerRoute = createRoute({
       description: '注册成功',
       content: {
         'application/json': {
-          schema: respSchema(z.object({
-            id: z.number(),
-            name: z.string(),
-            email: z.string(),
-            createdAt: z.date().nullable()
-          }))
+          schema: respSchema(userViewSchema)
         }
       }
     }
   }
 })
-userRouter.openapi(registerRoute, async (c) => {
-  const body = c.req.valid('json')
-  const hashPwd = await bcrypt.hash(body.password, 10)
-  const [newUser] = await db.insert(users).values({ ...body, password: hashPwd })
-    .returning({ id: users.id, name: users.name, email: users.email, createdAt: users.createdAt })
-  return success(c, newUser, '注册成功', 201)
-})
+userRouter.openapi(registerRoute, (c) => userController.register(c, c.req.valid('json')))
 
 // --------------------------
 // 登录
@@ -191,16 +154,7 @@ const loginRoute = createRoute({
     }
   }
 })
-userRouter.openapi(loginRoute, async (c) => {
-  const { email, password } = c.req.valid('json')
-  const [user] = await db.select().from(users).where(eq(users.email, email))
-  if (!user) return fail(c, '账号不存在', 401)
-  const ok = await bcrypt.compare(password, user.password)
-  if (!ok) return fail(c, '密码错误', 401)
-  const payload: AuthPayload = { sub: user.id, email: user.email, name: user.name, role: user.role, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 }
-  const token = await sign(payload, c.env.JWT_SECRET!)
-  return success(c, { token }, '登录成功')
-})
+userRouter.openapi(loginRoute, (c) => userController.login(c, c.req.valid('json')))
 
 // --------------------------
 // 修改用户
@@ -222,15 +176,9 @@ const updateRoute = createRoute({
     404: { description: '用户不存在' }
   }
 })
-userRouter.openapi(updateRoute, async (c) => {
-  const id = c.req.valid('param').id
-  const body = c.req.valid('json')
-  if (body.password) body.password = await bcrypt.hash(body.password, 10)
-  const [updated] = await db.update(users).set(body).where(eq(users.id, id))
-    .returning({ id: users.id, name: users.name, email: users.email, createdAt: users.createdAt })
-  if (!updated) return fail(c, '用户不存在', 404)
-  return success(c, updated, '修改成功')
-})
+userRouter.openapi(updateRoute, (c) =>
+  userController.update(c, c.req.valid('param').id, c.req.valid('json'))
+)
 
 // --------------------------
 // 删除用户
@@ -247,12 +195,6 @@ const deleteRoute = createRoute({
     404: { description: '用户不存在' }
   }
 })
-userRouter.openapi(deleteRoute, async (c) => {
-  const id = c.req.valid('param').id
-  const [del] = await db.delete(users).where(eq(users.id, id))
-    .returning({ id: users.id, name: users.name, email: users.email, createdAt: users.createdAt })
-  if (!del) return fail(c, '用户不存在', 404)
-  return success(c, null, '删除成功')
-})
+userRouter.openapi(deleteRoute, (c) => userController.remove(c, c.req.valid('param').id))
 
 export default userRouter

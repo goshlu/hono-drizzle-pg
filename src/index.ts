@@ -6,6 +6,7 @@ import userRouter from './routes/user'
 import { authMiddleware } from './middleware/auth'
 import { logger } from './middleware/logger'
 import { fail } from './utils/response'
+import { ApiError } from './utils/errors'
 import type { AppEnv } from './env'
 
 // 替换 Hono → OpenAPIHono
@@ -22,6 +23,7 @@ app.use('*', logger)
 
 // 全局异常
 app.onError((err, c) => {
+  if (err instanceof ApiError) return fail(c, err.message, err.status, err.data)
   console.error('❌ 服务异常：', err)
   return fail(c, '服务器内部错误', 500, err.message)
 })
