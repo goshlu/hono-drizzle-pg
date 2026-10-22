@@ -2,8 +2,9 @@ import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi'
 import type { AppEnv } from '../env'
 import { userInsertSchema, userUpdateSchema } from '../db/schema'
 import { userController } from '../controllers/user.controller'
+import { openApiHonoOptions } from '../middleware/errorHandler'
 
-const userRouter = new OpenAPIHono<AppEnv>()
+const userRouter = new OpenAPIHono<AppEnv>(openApiHonoOptions)
 
 // 公共返回包装 schema（给文档看）
 const respSchema = <T extends z.ZodTypeAny>(dataSchema: T) =>

@@ -4,13 +4,12 @@ import { OpenAPIHono } from '@hono/zod-openapi'
 import { apiReference } from '@scalar/hono-api-reference'
 import userRouter from './routes/user'
 import { authMiddleware } from './middleware/auth'
+import { errorHandler, openApiHonoOptions } from './middleware/errorHandler'
 import { logger } from './middleware/logger'
-import { fail } from './utils/response'
-import { ApiError } from './utils/errors'
 import type { AppEnv } from './env'
 
 // 替换 Hono → OpenAPIHono
-const app = new OpenAPIHono<AppEnv>()
+const app = new OpenAPIHono<AppEnv>(openApiHonoOptions)
 
 // Node 环境注入 JWT 密钥（与 .env 中 JWT_SECRET 一致）
 app.use('*', async (c, next) => {
@@ -21,12 +20,7 @@ app.use('*', async (c, next) => {
 // 全局日志
 app.use('*', logger)
 
-// 全局异常
-app.onError((err, c) => {
-  if (err instanceof ApiError) return fail(c, err.message, err.status, err.data)
-  console.error('❌ 服务异常：', err)
-  return fail(c, '服务器内部错误', 500, err.message)
-})
+app.onError(errorHandler)
 
 // JWT Bearer 鉴权（Scalar / OpenAPI「Authorize」）
 app.openAPIRegistry.registerComponent('securitySchemes', 'JwtAuth', {
